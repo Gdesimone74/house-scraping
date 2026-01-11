@@ -6,7 +6,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from api._lib.database import get_supabase
+from api._lib.database import get_historial
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -22,17 +22,10 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             property_id = match.group(1)
-
-            # Get Supabase client and query price history
-            supabase = get_supabase()
-            result = supabase.table("historial_precios") \
-                .select("*") \
-                .eq("propiedad_id", property_id) \
-                .order("fecha_cambio", desc=True) \
-                .execute()
+            data = get_historial(property_id)
 
             historial = []
-            for row in result.data:
+            for row in data:
                 historial.append({
                     "id": row["id"],
                     "precioAnterior": float(row["precio_anterior"]) if row["precio_anterior"] else None,

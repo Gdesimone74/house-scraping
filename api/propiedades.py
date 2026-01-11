@@ -6,7 +6,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api._lib.database import get_supabase
+from api._lib.database import get_propiedades
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -22,51 +22,28 @@ class handler(BaseHTTPRequestHandler):
             precio_max = params.get("precio_max", [None])[0]
             fuente = params.get("fuente", [None])[0]
             ordenar = params.get("ordenar", ["fecha"])[0]
-            page = int(params.get("page", [1])[0])
-            limit = min(int(params.get("limit", [20])[0]), 100)
+            page = int(params.get("page", ["1"])[0])
+            limit = min(int(params.get("limit", ["20"])[0]), 100)
 
-            # Get Supabase client
-            supabase = get_supabase()
-
-            # Build query
-            query = supabase.table("propiedades").select("*", count="exact")
-
-            # Apply filters
-            query = query.eq("activo", True)
-
-            if barrio:
-                query = query.eq("barrio", barrio)
-            if tipo and tipo in ["departamento", "casa"]:
-                query = query.eq("tipo", tipo)
-            if fuente and fuente in ["mercadolibre", "zonaprop", "argenprop"]:
-                query = query.eq("fuente", fuente)
-            if precio_min:
-                query = query.gte("precio", float(precio_min))
-            if precio_max:
-                query = query.lte("precio", float(precio_max))
-
-            # Apply sorting
-            if ordenar == "precio_asc":
-                query = query.order("precio", desc=False)
-            elif ordenar == "precio_desc":
-                query = query.order("precio", desc=True)
-            else:
-                query = query.order("fecha_primer_visto", desc=True)
-
-            # Apply pagination
-            offset = (page - 1) * limit
-            query = query.range(offset, offset + limit - 1)
-
-            # Execute query
-            result = query.execute()
+            # Get properties
+            result = get_propiedades(
+                barrio=barrio,
+                tipo=tipo,
+                fuente=fuente,
+                precio_min=float(precio_min) if precio_min else None,
+                precio_max=float(precio_max) if precio_max else None,
+                ordenar=ordenar,
+                page=page,
+                limit=limit
+            )
 
             # Calculate pagination
-            total = result.count or 0
+            total = result["count"] or len(result["data"])
             total_pages = (total + limit - 1) // limit if total > 0 else 1
 
-            # Transform response to match frontend expectations
+            # Transform response
             propiedades = []
-            for row in result.data:
+            for row in result["data"]:
                 propiedades.append({
                     "_id": row["id"],
                     "externalId": row["external_id"],

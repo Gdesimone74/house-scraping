@@ -6,7 +6,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from api._lib.database import get_supabase
+from api._lib.database import get_propiedad
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -22,20 +22,15 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             property_id = match.group(1)
+            row = get_propiedad(property_id)
 
-            # Get Supabase client and query
-            supabase = get_supabase()
-            result = supabase.table("propiedades").select("*").eq("id", property_id).single().execute()
-
-            if not result.data:
+            if not row:
                 self.send_response(404)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": "Property not found"}).encode())
                 return
-
-            row = result.data
 
             # Transform to match frontend expectations
             propiedad = {
