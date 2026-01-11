@@ -1,25 +1,13 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List, Optional, Literal
 from datetime import datetime
-from bson import ObjectId
-
-class PyObjectId(str):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v, handler):
-        if isinstance(v, ObjectId):
-            return str(v)
-        return str(v)
 
 class PropiedadBase(BaseModel):
     externalId: str
     url: str
     titulo: str
-    precio: float
-    moneda: Literal["USD", "ARS"]
+    precio: Optional[float] = None
+    moneda: Literal["USD", "ARS"] = "USD"
     barrio: str
     tipo: Literal["departamento", "casa"]
     ambientes: Optional[int] = None
@@ -32,22 +20,12 @@ class PropiedadBase(BaseModel):
     fuente: Literal["mercadolibre", "zonaprop", "argenprop"]
     operacion: Literal["venta"] = "venta"
 
-class PropiedadCreate(PropiedadBase):
-    pass
-
 class Propiedad(PropiedadBase):
-    id: str = Field(alias="_id")
+    id: str
     fechaPublicacion: Optional[datetime] = None
     fechaPrimerVisto: datetime
     fechaUltimaActualizacion: datetime
     activo: bool = True
-
-    class Config:
-        populate_by_name = True
-        json_encoders = {
-            ObjectId: str,
-            datetime: lambda v: v.isoformat()
-        }
 
 class PropiedadListResponse(BaseModel):
     propiedades: List[Propiedad]
