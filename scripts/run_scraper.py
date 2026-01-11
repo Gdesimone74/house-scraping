@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to run all scrapers and save properties to MongoDB.
+Script to run all scrapers and save properties to Supabase.
 Designed to be run via GitHub Actions cron job.
 """
 
@@ -15,13 +15,13 @@ load_dotenv()
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api._lib.database import get_propiedades_collection, ensure_indexes
+from api._lib.database import get_supabase
 from api._lib.scrapers import MercadoLibreScraper, ZonapropScraper, ArgenpropScraper
 from api._lib.models import BARRIOS_CABA
 
-def save_properties(properties: list, collection) -> dict:
+def save_properties(properties: list, supabase) -> dict:
     """
-    Save properties to MongoDB, handling duplicates.
+    Save properties to Supabase, handling duplicates with upsert.
     Returns stats about inserted/updated properties.
     """
     stats = {
@@ -30,39 +30,39 @@ def save_properties(properties: list, collection) -> dict:
         "errors": 0
     }
 
-    now = datetime.utcnow()
-
     for prop in properties:
         try:
-            # Check if property already exists
-            existing = collection.find_one({
-                "externalId": prop["externalId"],
-                "fuente": prop["fuente"]
-            })
+            # Prepare data for Supabase (snake_case)
+            data = {
+                "external_id": prop["externalId"],
+                "url": prop["url"],
+                "titulo": prop["titulo"],
+                "precio": prop.get("precio"),
+                "moneda": prop.get("moneda", "USD"),
+                "barrio": prop["barrio"],
+                "tipo": prop["tipo"],
+                "ambientes": prop.get("ambientes"),
+                "dormitorios": prop.get("dormitorios"),
+                "banos": prop.get("banos"),
+                "metros_cuadrados": prop.get("metrosCuadrados"),
+                "metros_totales": prop.get("metrosTotales"),
+                "fotos": prop.get("fotos", []),
+                "descripcion": prop.get("descripcion"),
+                "fuente": prop["fuente"],
+                "operacion": prop.get("operacion", "venta"),
+                "activo": True
+            }
 
-            if existing:
-                # Update existing property
-                collection.update_one(
-                    {"_id": existing["_id"]},
-                    {
-                        "$set": {
-                            "precio": prop.get("precio"),
-                            "moneda": prop.get("moneda", "USD"),
-                            "fotos": prop.get("fotos", []),
-                            "fechaUltimaActualizacion": now,
-                            "activo": True
-                        }
-                    }
-                )
-                stats["updated"] += 1
-            else:
-                # Insert new property
-                prop["fechaPrimerVisto"] = now
-                prop["fechaUltimaActualizacion"] = now
-                prop["activo"] = True
+            # Try to upsert (insert or update on conflict)
+            result = supabase.table("propiedades").upsert(
+                data,
+                on_conflict="external_id,fuente"
+            ).execute()
 
-                collection.insert_one(prop)
+            if result.data:
                 stats["inserted"] += 1
+            else:
+                stats["updated"] += 1
 
         except Exception as e:
             print(f"Error saving property {prop.get('externalId')}: {e}")
@@ -70,34 +70,25 @@ def save_properties(properties: list, collection) -> dict:
 
     return stats
 
-def mark_inactive_properties(collection, hours: int = 48):
+def mark_inactive_properties(supabase, hours: int = 48):
     """
     Mark properties as inactive if they haven't been updated recently.
-    This helps identify properties that were removed from listings.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
 
-    result = collection.update_many(
-        {
-            "activo": True,
-            "fechaUltimaActualizacion": {"$lt": cutoff}
-        },
-        {"$set": {"activo": False}}
-    )
+    result = supabase.table("propiedades").update(
+        {"activo": False}
+    ).eq("activo", True).lt("fecha_ultima_actualizacion", cutoff).execute()
 
-    return result.modified_count
+    return len(result.data) if result.data else 0
 
 def main():
     print("=" * 50)
     print(f"Starting scraper at {datetime.now().isoformat()}")
     print("=" * 50)
 
-    # Ensure indexes exist
-    print("\nEnsuring database indexes...")
-    ensure_indexes()
-
-    # Get collection
-    collection = get_propiedades_collection()
+    # Get Supabase client
+    supabase = get_supabase()
 
     # Initialize scrapers
     scrapers = [
@@ -107,7 +98,6 @@ def main():
     ]
 
     # Select a subset of barrios to scrape (to stay within time limits)
-    # Rotate through barrios on different runs
     barrios_to_scrape = BARRIOS_CABA[:10]  # Scrape 10 barrios per run
 
     total_stats = {"inserted": 0, "updated": 0, "errors": 0}
@@ -122,7 +112,7 @@ def main():
             print(f"\nFound {len(properties)} properties from {scraper.fuente}")
 
             if properties:
-                stats = save_properties(properties, collection)
+                stats = save_properties(properties, supabase)
                 print(f"Inserted: {stats['inserted']}, Updated: {stats['updated']}, Errors: {stats['errors']}")
 
                 total_stats["inserted"] += stats["inserted"]
@@ -135,7 +125,7 @@ def main():
 
     # Mark old properties as inactive
     print("\nMarking inactive properties...")
-    inactive_count = mark_inactive_properties(collection)
+    inactive_count = mark_inactive_properties(supabase)
     print(f"Marked {inactive_count} properties as inactive")
 
     print("\n" + "=" * 50)
