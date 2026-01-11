@@ -1,16 +1,15 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import re
-import sys
+from urllib.request import Request, urlopen
 import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from api._lib.database import get_historial
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
+            SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+            SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
             # Extract property ID from path (UUID format)
             match = re.search(r"/api/historial/([a-fA-F0-9-]{36})", self.path)
             if not match:
@@ -22,7 +21,17 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             property_id = match.group(1)
-            data = get_historial(property_id)
+
+            # Build URL
+            url = f"{SUPABASE_URL}/rest/v1/historial_precios?propiedad_id=eq.{property_id}&select=*&order=fecha_cambio.desc"
+
+            # Make request
+            req = Request(url)
+            req.add_header("apikey", SUPABASE_KEY)
+            req.add_header("Authorization", f"Bearer {SUPABASE_KEY}")
+
+            with urlopen(req, timeout=30) as response:
+                data = json.loads(response.read().decode())
 
             historial = []
             for row in data:

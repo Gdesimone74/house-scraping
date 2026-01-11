@@ -1,16 +1,16 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import re
-import sys
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from api._lib.database import get_propiedad
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
+            SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+            SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
             # Extract ID from path (UUID format)
             match = re.search(r"/api/propiedad/([a-fA-F0-9-]{36})", self.path)
             if not match:
@@ -22,9 +22,19 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             property_id = match.group(1)
-            row = get_propiedad(property_id)
 
-            if not row:
+            # Build URL
+            url = f"{SUPABASE_URL}/rest/v1/propiedades?id=eq.{property_id}&select=*"
+
+            # Make request
+            req = Request(url)
+            req.add_header("apikey", SUPABASE_KEY)
+            req.add_header("Authorization", f"Bearer {SUPABASE_KEY}")
+
+            with urlopen(req, timeout=30) as response:
+                data = json.loads(response.read().decode())
+
+            if not data:
                 self.send_response(404)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -32,7 +42,8 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Property not found"}).encode())
                 return
 
-            # Transform to match frontend expectations
+            row = data[0]
+
             propiedad = {
                 "_id": row["id"],
                 "externalId": row["external_id"],
