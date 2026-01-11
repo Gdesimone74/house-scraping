@@ -61,3 +61,73 @@ CREATE POLICY "Permitir lectura publica" ON propiedades
 -- Política para permitir escritura con service key
 CREATE POLICY "Permitir escritura con service key" ON propiedades
     FOR ALL USING (true) WITH CHECK (true);
+
+-- =============================================
+-- HISTORIAL DE PRECIOS
+-- =============================================
+
+-- Tabla para guardar variaciones de precio
+CREATE TABLE IF NOT EXISTS historial_precios (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    propiedad_id UUID NOT NULL REFERENCES propiedades(id) ON DELETE CASCADE,
+    precio_anterior DECIMAL,
+    precio_nuevo DECIMAL,
+    moneda TEXT DEFAULT 'USD',
+    variacion_porcentaje DECIMAL,
+    fecha_cambio TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Índices para historial
+CREATE INDEX IF NOT EXISTS idx_historial_propiedad ON historial_precios(propiedad_id);
+CREATE INDEX IF NOT EXISTS idx_historial_fecha ON historial_precios(fecha_cambio DESC);
+
+-- Trigger para guardar cambios de precio automáticamente
+CREATE OR REPLACE FUNCTION registrar_cambio_precio()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Solo registrar si el precio cambió y ambos valores existen
+    IF OLD.precio IS NOT NULL AND NEW.precio IS NOT NULL AND OLD.precio != NEW.precio THEN
+        INSERT INTO historial_precios (
+            propiedad_id,
+            precio_anterior,
+            precio_nuevo,
+            moneda,
+            variacion_porcentaje
+        ) VALUES (
+            NEW.id,
+            OLD.precio,
+            NEW.precio,
+            NEW.moneda,
+            ROUND(((NEW.precio - OLD.precio) / OLD.precio * 100)::numeric, 2)
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_cambio_precio ON propiedades;
+CREATE TRIGGER trigger_cambio_precio
+    AFTER UPDATE ON propiedades
+    FOR EACH ROW
+    EXECUTE FUNCTION registrar_cambio_precio();
+
+-- Políticas para historial_precios
+ALTER TABLE historial_precios ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permitir lectura historial" ON historial_precios FOR SELECT USING (true);
+CREATE POLICY "Permitir escritura historial" ON historial_precios FOR ALL USING (true) WITH CHECK (true);
+
+-- Vista útil: propiedades con su último cambio de precio
+CREATE OR REPLACE VIEW propiedades_con_variacion AS
+SELECT
+    p.*,
+    h.precio_anterior,
+    h.variacion_porcentaje,
+    h.fecha_cambio as fecha_ultimo_cambio_precio
+FROM propiedades p
+LEFT JOIN LATERAL (
+    SELECT precio_anterior, variacion_porcentaje, fecha_cambio
+    FROM historial_precios
+    WHERE propiedad_id = p.id
+    ORDER BY fecha_cambio DESC
+    LIMIT 1
+) h ON true;
