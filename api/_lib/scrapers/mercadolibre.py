@@ -7,6 +7,7 @@ class MercadoLibreScraper(BaseScraper):
     """Scraper for MercadoLibre Inmuebles"""
 
     BASE_URL = "https://inmuebles.mercadolibre.com.ar"
+    use_playwright = True  # Use Playwright to bypass bot detection
 
     @property
     def fuente(self) -> str:

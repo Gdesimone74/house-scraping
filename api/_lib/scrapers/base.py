@@ -9,6 +9,8 @@ import re
 class BaseScraper(ABC):
     """Base class for all property scrapers"""
 
+    use_playwright = False  # Override in subclass to use Playwright
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
@@ -18,6 +20,8 @@ class BaseScraper(ABC):
             "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
         })
+        self._playwright = None
+        self._browser = None
 
     @property
     @abstractmethod
@@ -40,18 +44,63 @@ class BaseScraper(ABC):
         """Extract listing elements from a search results page"""
         pass
 
+    def _start_browser(self):
+        """Start Playwright browser"""
+        if self._browser is None:
+            from playwright.sync_api import sync_playwright
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']
+            )
+            print(f"Started Playwright browser for {self.fuente}")
+
+    def _stop_browser(self):
+        """Stop Playwright browser"""
+        if self._browser:
+            self._browser.close()
+            self._browser = None
+        if self._playwright:
+            self._playwright.stop()
+            self._playwright = None
+
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """Fetch a page and return parsed BeautifulSoup object"""
         try:
             # Add random delay to avoid rate limiting
             time.sleep(random.uniform(2, 5))
 
-            response = self.session.get(url, timeout=30)
-            response.raise_for_status()
-
-            return BeautifulSoup(response.content, "lxml")
-        except requests.RequestException as e:
+            if self.use_playwright:
+                return self._fetch_with_playwright(url)
+            else:
+                response = self.session.get(url, timeout=30)
+                response.raise_for_status()
+                return BeautifulSoup(response.content, "lxml")
+        except Exception as e:
             print(f"Error fetching {url}: {e}")
+            return None
+
+    def _fetch_with_playwright(self, url: str) -> Optional[BeautifulSoup]:
+        """Fetch page using Playwright browser"""
+        try:
+            self._start_browser()
+            page = self._browser.new_page()
+            page.set_extra_http_headers({
+                "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"
+            })
+
+            # Navigate and wait for content to load
+            page.goto(url, wait_until="networkidle", timeout=30000)
+
+            # Wait a bit for dynamic content
+            page.wait_for_timeout(2000)
+
+            content = page.content()
+            page.close()
+
+            return BeautifulSoup(content, "lxml")
+        except Exception as e:
+            print(f"Playwright error fetching {url}: {e}")
             return None
 
     def scrape_barrio(self, barrio: str, max_pages: int = 3) -> List[Dict[str, Any]]:
@@ -88,11 +137,16 @@ class BaseScraper(ABC):
         """Scrape properties from multiple neighborhoods"""
         all_properties = []
 
-        for barrio in barrios:
-            print(f"Scraping {barrio}...")
-            properties = self.scrape_barrio(barrio, max_pages_per_barrio)
-            all_properties.extend(properties)
-            print(f"  Found {len(properties)} properties in {barrio}")
+        try:
+            for barrio in barrios:
+                print(f"Scraping {barrio}...")
+                properties = self.scrape_barrio(barrio, max_pages_per_barrio)
+                all_properties.extend(properties)
+                print(f"  Found {len(properties)} properties in {barrio}")
+        finally:
+            # Always close browser if using Playwright
+            if self.use_playwright:
+                self._stop_browser()
 
         return all_properties
 

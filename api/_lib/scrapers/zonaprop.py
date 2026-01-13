@@ -8,6 +8,7 @@ class ZonapropScraper(BaseScraper):
     """Scraper for Zonaprop"""
 
     BASE_URL = "https://www.zonaprop.com.ar"
+    use_playwright = True  # Use Playwright to bypass bot detection
 
     @property
     def fuente(self) -> str:
