@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
 from .base import BaseScraper
+import requests
 import re
 
 class MercadoLibreScraper(BaseScraper):
@@ -52,9 +53,8 @@ class MercadoLibreScraper(BaseScraper):
             external_id_match = re.search(r"MLA-?(\d+)", url)
             external_id = external_id_match.group(0) if external_id_match else url
 
-            # Title
-            title_elem = element.select_one("h2.ui-search-item__title, .ui-search-item__title")
-            titulo = title_elem.get_text(strip=True) if title_elem else "Sin título"
+            # Title - get from link text since ML changed structure
+            titulo = link_elem.get_text(strip=True) if link_elem else "Sin título"
 
             # Price
             price_elem = element.select_one(".andes-money-amount__fraction, .price-tag-fraction")
@@ -71,12 +71,12 @@ class MercadoLibreScraper(BaseScraper):
 
             # Images
             fotos = []
-            img_elem = element.select_one("img.ui-search-result-image__element, img[data-src]")
+            img_elem = element.select_one("img")
             if img_elem:
-                img_url = img_elem.get("data-src") or img_elem.get("src", "")
+                img_url = img_elem.get("src") or img_elem.get("data-src", "")
                 if img_url and not img_url.startswith("data:"):
-                    # Get higher resolution version
-                    img_url = re.sub(r"-[A-Z]\.jpg", "-O.jpg", img_url)
+                    # Get higher resolution version (works for jpg and webp)
+                    img_url = re.sub(r"-[A-Z]\.(jpg|webp)", r"-O.\1", img_url)
                     fotos.append(img_url)
 
             # Attributes (rooms, bathrooms, area)
@@ -127,3 +127,43 @@ class MercadoLibreScraper(BaseScraper):
         except Exception as e:
             print(f"Error parsing MercadoLibre listing: {e}")
             return None
+
+    def get_photos_from_detail(self, url: str) -> List[str]:
+        """Get all photos from MercadoLibre detail page"""
+        try:
+            # Use fresh headers for detail page
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "es-AR,es;q=0.9",
+            }
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, "lxml")
+
+            photos = []
+            seen = set()
+
+            # Find all images from mlstatic
+            for img in soup.select("img[src*='mlstatic']"):
+                src = img.get("src", "")
+                if src and "mlstatic" in src and src not in seen:
+                    # Convert to high quality version
+                    # Replace size indicators like -F, -V, -W with -O (original)
+                    high_quality = re.sub(r"-[A-Z](-null)?\.(jpg|webp)", r"-O.\2", src)
+                    high_quality = re.sub(r"_[A-Z]\.(jpg|webp)", r"_O.\1", high_quality)
+                    if high_quality not in seen:
+                        seen.add(high_quality)
+                        photos.append(high_quality)
+
+            # Also check data-zoom attributes
+            for img in soup.select("img[data-zoom]"):
+                src = img.get("data-zoom", "")
+                if src and src not in seen:
+                    seen.add(src)
+                    photos.append(src)
+
+            return photos[:20]  # Limit to 20 photos
+
+        except Exception as e:
+            return []

@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
 from .base import BaseScraper
+import requests
 import re
 
 class ArgenpropScraper(BaseScraper):
@@ -135,3 +136,45 @@ class ArgenpropScraper(BaseScraper):
         except Exception as e:
             print(f"Error parsing Argenprop listing: {e}")
             return None
+
+    def get_photos_from_detail(self, url: str) -> List[str]:
+        """Get all photos from Argenprop detail page"""
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            }
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, "lxml")
+
+            photos = []
+            seen = set()
+
+            # Find gallery/carousel images
+            for img in soup.select("img[data-src], img[src*='res.cloudinary'], img[src*='argenprop']"):
+                src = img.get("data-src") or img.get("src", "")
+                if src and src not in seen and not src.startswith("data:"):
+                    seen.add(src)
+                    photos.append(src)
+
+            # Check for images in gallery containers
+            for img in soup.select(".gallery img, .carousel img, .slider img, .swiper img"):
+                src = img.get("data-src") or img.get("src", "")
+                if src and src not in seen and not src.startswith("data:"):
+                    seen.add(src)
+                    photos.append(src)
+
+            # Check for background-image in gallery elements
+            for elem in soup.select("[style*='background-image']"):
+                style = elem.get("style", "")
+                match = re.search(r"url\(['\"]?([^'\"]+)['\"]?\)", style)
+                if match:
+                    src = match.group(1)
+                    if src not in seen:
+                        seen.add(src)
+                        photos.append(src)
+
+            return photos[:20]  # Limit to 20 photos
+
+        except Exception as e:
+            return []

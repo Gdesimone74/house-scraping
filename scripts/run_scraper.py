@@ -16,7 +16,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api._lib.database import get_supabase
-from api._lib.scrapers import MercadoLibreScraper, ZonapropScraper, ArgenpropScraper
+from api._lib.scrapers import MercadoLibreScraper, ArgenpropScraper
 from api._lib.models import BARRIOS_CABA
 
 def save_properties(properties: list, supabase) -> dict:
@@ -57,7 +57,7 @@ def save_properties(properties: list, supabase) -> dict:
             result = supabase.table("propiedades").upsert(
                 data,
                 on_conflict="external_id,fuente"
-            ).execute()
+            )
 
             if result.data:
                 stats["inserted"] += 1
@@ -90,10 +90,9 @@ def main():
     # Get Supabase client
     supabase = get_supabase()
 
-    # Initialize scrapers
+    # Initialize scrapers (Zonaprop disabled - aggressive bot detection)
     scrapers = [
         MercadoLibreScraper(),
-        ZonapropScraper(),
         ArgenpropScraper()
     ]
 

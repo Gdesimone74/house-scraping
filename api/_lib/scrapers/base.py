@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -82,73 +83,123 @@ class BaseScraper(ABC):
 
     def _fetch_with_playwright(self, url: str) -> Optional[BeautifulSoup]:
         """Fetch page using Playwright browser"""
+        page = None
         try:
             self._start_browser()
-            page = self._browser.new_page()
-            page.set_extra_http_headers({
-                "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"
-            })
+            context = self._browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080},
+                locale="es-AR"
+            )
+            page = context.new_page()
 
             # Navigate and wait for content to load
-            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-            # Wait a bit for dynamic content
-            page.wait_for_timeout(2000)
+            # Wait for dynamic content
+            page.wait_for_timeout(3000)
 
             content = page.content()
-            page.close()
-
             return BeautifulSoup(content, "lxml")
         except Exception as e:
             print(f"Playwright error fetching {url}: {e}")
             return None
+        finally:
+            if page:
+                try:
+                    page.context.close()
+                except:
+                    pass
 
     def scrape_barrio(self, barrio: str, max_pages: int = 3) -> List[Dict[str, Any]]:
         """Scrape properties from a specific neighborhood"""
         properties = []
 
-        for page in range(1, max_pages + 1):
-            url = self.get_search_url(barrio, page)
-            soup = self.fetch_page(url)
-
-            if not soup:
-                break
-
-            listings = self.get_listings_from_page(soup)
-
-            if not listings:
-                break
-
-            for listing in listings:
-                try:
-                    prop = self.parse_listing(listing)
-                    if prop:
-                        prop["barrio"] = barrio
-                        prop["fuente"] = self.fuente
-                        prop["operacion"] = "venta"
-                        properties.append(prop)
-                except Exception as e:
-                    print(f"Error parsing listing: {e}")
-                    continue
-
-        return properties
-
-    def scrape_all(self, barrios: List[str], max_pages_per_barrio: int = 2) -> List[Dict[str, Any]]:
-        """Scrape properties from multiple neighborhoods"""
-        all_properties = []
-
         try:
-            for barrio in barrios:
-                print(f"Scraping {barrio}...")
-                properties = self.scrape_barrio(barrio, max_pages_per_barrio)
-                all_properties.extend(properties)
-                print(f"  Found {len(properties)} properties in {barrio}")
+            for page in range(1, max_pages + 1):
+                url = self.get_search_url(barrio, page)
+                soup = self.fetch_page(url)
+
+                if not soup:
+                    break
+
+                listings = self.get_listings_from_page(soup)
+
+                if not listings:
+                    break
+
+                for listing in listings:
+                    try:
+                        prop = self.parse_listing(listing)
+                        if prop:
+                            prop["barrio"] = barrio
+                            prop["fuente"] = self.fuente
+                            prop["operacion"] = "venta"
+                            properties.append(prop)
+                    except Exception as e:
+                        print(f"Error parsing listing: {e}")
+                        continue
         finally:
-            # Always close browser if using Playwright
+            # Close browser after each barrio to avoid async conflicts
             if self.use_playwright:
                 self._stop_browser()
 
+        return properties
+
+    def scrape_all(self, barrios: List[str], max_pages_per_barrio: int = 2, fetch_all_photos: bool = True) -> List[Dict[str, Any]]:
+        """Scrape properties from multiple neighborhoods"""
+        all_properties = []
+
+        for barrio in barrios:
+            print(f"Scraping {barrio}...")
+            properties = self.scrape_barrio(barrio, max_pages_per_barrio)
+            all_properties.extend(properties)
+            print(f"  Found {len(properties)} properties in {barrio}")
+
+        # Fetch all photos in parallel if enabled
+        if fetch_all_photos and all_properties:
+            print(f"\nFetching all photos for {len(all_properties)} properties...")
+            all_properties = self.enrich_with_photos(all_properties)
+
         return all_properties
+
+    def get_photos_from_detail(self, url: str) -> List[str]:
+        """Get all photos from a property detail page. Override in subclass."""
+        return []
+
+    def _fetch_photos_for_property(self, prop: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch all photos for a single property"""
+        try:
+            time.sleep(random.uniform(0.5, 1.5))  # Small delay
+            photos = self.get_photos_from_detail(prop["url"])
+            if photos:
+                prop["fotos"] = photos
+        except Exception as e:
+            print(f"Error fetching photos for {prop.get('externalId')}: {e}")
+        return prop
+
+    def enrich_with_photos(self, properties: List[Dict[str, Any]], max_workers: int = 5) -> List[Dict[str, Any]]:
+        """Fetch all photos for properties in parallel"""
+        enriched = []
+        total = len(properties)
+        completed = 0
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(self._fetch_photos_for_property, prop): prop for prop in properties}
+
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    enriched.append(result)
+                    completed += 1
+                    if completed % 20 == 0:
+                        print(f"  Photos: {completed}/{total} completed")
+                except Exception as e:
+                    enriched.append(futures[future])  # Keep original if failed
+                    print(f"Error: {e}")
+
+        print(f"  Photos: {completed}/{total} completed")
+        return enriched
 
     @staticmethod
     def clean_price(price_text: str) -> tuple[Optional[float], str]:
