@@ -34,8 +34,11 @@ def get_supabase():
             self.url = f"{client.url}/rest/v1/{name}"
 
         def upsert(self, data, on_conflict=None):
-            headers = {"Prefer": "resolution=merge-duplicates"}
-            response = self.client.session.post(self.url, json=data, headers=headers)
+            headers = {"Prefer": "resolution=merge-duplicates,return=representation"}
+            url = self.url
+            if on_conflict:
+                url += f"?on_conflict={on_conflict}"
+            response = self.client.session.post(url, json=data, headers=headers)
             response.raise_for_status()
             return type('Result', (), {'data': response.json() if response.text else []})()
 
